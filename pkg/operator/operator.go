@@ -121,6 +121,8 @@ func NewOperator() (context.Context, *Operator) {
 	log.SetLogger(logger)
 	klog.SetLogger(logger)
 
+	klog.Info("THIS IS PROOF THAT THIS LIBRARY IS BEING USED IN OUR FORK")
+
 	// Client Config
 	config := ctrl.GetConfigOrDie()
 	config.RateLimiter = flowcontrol.NewTokenBucketRateLimiter(float32(options.FromContext(ctx).KubeClientQPS), options.FromContext(ctx).KubeClientBurst)
