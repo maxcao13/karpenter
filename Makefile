@@ -24,12 +24,18 @@ build-with-kind: # build with kind assumes the image will be uploaded directly o
 	$(eval IMG_REPOSITORY=$(shell echo $(CONTROLLER_IMG) | cut -d ":" -f 1))
 	$(eval IMG_TAG=latest) 
 
+build-with-openshift: ## Build the Karpenter KWOK controller images using ko build for OpenShift cluster 
+	$(eval CONTROLLER_IMG=$(shell $(WITH_GOFLAGS) KO_DOCKER_REPO="$(KWOK_REPO)" ko build --insecure-registry -B sigs.k8s.io/karpenter/kwok))
+	$(eval IMG_REPOSITORY=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 1))
+	$(eval IMG_TAG=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 2 -s))
+	$(eval IMG_DIGEST=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 2))
+	
 build: ## Build the Karpenter KWOK controller images using ko build
 	$(eval CONTROLLER_IMG=$(shell $(WITH_GOFLAGS) KO_DOCKER_REPO="$(KWOK_REPO)" ko build -B sigs.k8s.io/karpenter/kwok))
 	$(eval IMG_REPOSITORY=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 1))
 	$(eval IMG_TAG=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 1 | cut -d ":" -f 2 -s))
 	$(eval IMG_DIGEST=$(shell echo $(CONTROLLER_IMG) | cut -d "@" -f 2))
-	
+ 
 apply-with-kind: verify build-with-kind ## Deploy the kwok controller from the current state of your git repository into your ~/.kube/config cluster
 	kubectl apply -f kwok/charts/crds
 	helm upgrade --install karpenter kwok/charts --namespace $(KARPENTER_NAMESPACE) --skip-crds \
@@ -39,6 +45,8 @@ apply-with-kind: verify build-with-kind ## Deploy the kwok controller from the c
 		--set serviceMonitor.enabled=true \
 		--set-string controller.env[0].name=ENABLE_PROFILING \
 		--set-string controller.env[0].value=true 
+
+apply-with-openshift: openshift-verify build-with-openshift apply ## Deploy the kwok controller from the current state of your git repository into your ~/.kube/config OpenShift cluster
 
 e2etests: ## Run the e2e suite against your local cluster
 	cd test && go test \
