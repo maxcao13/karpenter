@@ -2,7 +2,7 @@
 
 ## Motivation
 
-Service providers and cluster administrators should have the ability to enforce maximum node counts per `NodePool` to address several critical use cases:
+Service providers and cluster administrators should have the ability to enforce maximum node counts per `NodePool` to address several important use cases:
 
 * **Licensing constraints**: Respect software licensing limits (e.g., monitoring agents with per-node licensing)
 * **IP address management**: With fixed IP address pools, physically prevent node creation beyond the available IP capacity
@@ -13,7 +13,7 @@ Service providers and cluster administrators should have the ability to enforce 
 
 - Enforcing global maximum Node limits is not a goal of this design.
 - This design does not involve nodes managed outside of Karpenter.
-- The Node limits discussed in this design are slightly different from the Node limits discussed in the [Karpenter - Static Capacity](static-capacity.md) design.
+- The Node limits discussed in this design are different from the Node limits discussed in the [Karpenter - Static Capacity](static-capacity.md) design, but involve similar concepts.
     - See the [Relationship to Static Capacity Design](#relationship-to-static-capacity-design) section for more details.
 
 ## Design Options
@@ -22,7 +22,7 @@ There are three potential approaches for implementing `NodePool` node limits, ea
 
 ### Option 1: Hard Limits
 
-**Description**: Node limits are enforced as hard constraints that block both provisioning and disruption when the limit is reached. Disruption is blocked because Karpenter requires the new nodes to be schedulable and ready before the old node can be terminated, which can lead to more nodes than the limit at one state.
+**Description**: Node limits are enforced as hard constraints that block both provisioning and graceful disruption (Consolidation and Drift) when the limit is reached. Graceful disruption is blocked because Karpenter requires the new nodes to be schedulable and ready before the old node can be terminated, which can lead to more nodes than the limit at one state.
 
 **Benefits**:
 - Guarantees the invariant that node count never exceeds the limit
@@ -33,10 +33,10 @@ There are three potential approaches for implementing `NodePool` node limits, ea
 
 ### Option 2: Soft Limits
 
-**Description**: Node limits are enforced only during provisioning, allowing disruption operations to continue even when at the limit.
+**Description**: Node limits are enforced only during provisioning, allowing graceful disruption operations to continue even when at the limit.
 
 **Benefits**:
-- Disruption functions continue to work, allowing consolidation and drift even at the limit.
+- Graceful disruption functions continue to work, allowing Consolidation and Drift even at the limit.
 - In steady state, nodes will stay under the limit (assuming the cloud provider allows the node limit to be exceeded)
 
 **Drawbacks**:
@@ -57,22 +57,19 @@ The values can be `Hard` or `Soft`, defaulting to `Hard`.
 - Additional configuration complexity for users
 - More complex implementation
 
-<!-- ### Recommended Approach: Hard Limits
+### Recommended Approach: Hard Limits
 
-Based on the critical use cases (e.g., IP address management), we recommend **Option 1: Hard Limits** as the initial implementation.
-
-TODO(maxcao13): Want to hear from the community.
--->
+Based on covering all the use cases, we recommend **Option 1: Hard Limits** as the initial implementation.
 
 ## Relationship to Static Capacity Design
 
-This design builds upon the infrastructure established in the [Karpenter - Static Capacity](static-capacity.md) design, which already formally introduced node limits, but specifically for static capacity:
+This design builds upon the infrastructure established in the [Karpenter - Static Capacity](static-capacity.md) design, which already formally introduced node limits, but specifically for static capacity. This design is meant to support node limits for regular non-static `NodePool`s which scale up and down based on workload demands.
 
-- `nodepool.spec.limits.nodes`: `NodePool` limits for constraining maximum node count
-- `nodepool.status.nodes`: Current node count tracking per NodePool
-- Validation rules for handling node limits in NodePool specs
+This feature borrows from the Static Capacity design:
 
-This design utilizes those existing fields for non-static `NodePool`s where node count can be limited by a hard or soft limit.
+- `nodepool.spec.limits.nodes`: The usage of a well-known resource key to define limits for constraining maximum node count per `NodePool`
+- `nodepool.status.nodes`: Current node count tracking per `NodePool`
+- Deprovisioning logic for node counts over the node limit
 
 ## Implementation Details
 
@@ -104,9 +101,11 @@ spec:
     - This will allow the scheduler to correctly subtract the node capacity when updating the remaining resources for the `NodePool`.
 - When node limits have been exhausted, new `NodeClaim` creation is blocked.
 
-### Disruption
+### Graceful Disruption (Consolidation and Drift)
 
-An easy way to implement the node limit functionality into the disruption logic is by integrating it into the disruption budget calculation:
+Graceful disruption needs to be handled because Karpenter Consolidation and Drift require new nodes to be schedulable and ready before old nodes can be terminated.
+
+A way to handle these situations is by integrating it into the NodePool Disruption Budget calculations:
 
 ```go
 // In pkg/controllers/disruption/helpers.go
@@ -129,25 +128,26 @@ remainingNodeLimit := getNodePoolRemainingNodeLimit(nodePool, numNodes[nodePool.
 disruptionBudgetMapping[nodePool.Name] = lo.Min([]int{remainingDisruptionBudget, remainingNodeLimit})
 ```
 
-This will allow us to enforce the node limit for dynamic `NodePool`s during disruption operations cleanly by leveraging the existing functionality for tracking disruption budget as a special case.
+This will allow us to enforce the node limit for dynamic `NodePool`s during graceful disruption operations cleanly by leveraging the existing functionality for tracking disruption budget as a special case.
 
-If the node limit is reached, we publish a special event to indicate this, distinguishing from a regular disruption budget blocking event.
+If the node limit is reached, Karpenter will publish a distinct event to indicate this, distinguishing from a regular disruption budget blocking event.
 
-E.g., special event to indicate node limit blocking:
+E.g., distinct event to indicate node limit blocking:
 ```bash
 Normal  DisruptionBlocked  NodePool/default No allowed disruptions for disruption reason Underutilized due to node hard limit
 ```
 
-Note that for implementing soft limits, handling for disruption budget can be ignored. Soft node limits should allow disruption operations to continue even when at the limit.
+Note that for implementing soft limits, handling for disruption budget can be ignored. Soft node limits should allow all disruption operations to continue even when at the limit.
 
-### Behavior and migration
+Also note that Forceful Methods (e.g., Expiration) are not affected by these changes to implement node limits, since those methods do not require node replacement.
 
-- If no node limit is specified in NodePool limits, no limit applies.
-- Existing NodePools without node limits continue to work unchanged.
-- If there were already more nodes provisioned than the limit:
-  - New nodes from the `NodePool` will not be provisioned until the node count is reduced to the limit.
-  - In the case of hard limits, disruption will be blocked until the node count is reduced to the limit.
-  - Termination will **not** be triggered to reduce the node count down to the limit.
+### Deprovisioning when node count exceeds the limit
+
+If more nodes exist in the cluster than the `NodePool` limit, Termination will be triggered to reduce the node count. We can rework the existing `getDeprovisioningCandidates` logic from the static deprovisioning controller to select which nodes to terminate in an ordered manner.
+
+See this [section](static-capacity.md#deprovisioning-controller) in the static capacity design for more details on the deprovisioning logic.
+
+If you decrease the node limit below the current node count, the new limit will be respected immediately and trigger the deprovisioning process. Note that `spec.limits` is a "Behavioral field", and will not be considered for Drift, but Karpenter should still react to changes that lower the limit and start terminating nodes.
 
 ### Validation
 

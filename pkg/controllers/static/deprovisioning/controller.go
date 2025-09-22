@@ -74,7 +74,7 @@ func NewController(kubeClient client.Client, cluster *state.Cluster, cloudProvid
 // Requeue after computing Static NodePool to ensure we don't miss any events
 func (c *Controller) Reconcile(ctx context.Context, np *v1.NodePool) (reconcile.Result, error) {
 	ctx = injection.WithControllerName(ctx, "static.deprovisioning")
-
+	fmt.Println("Reconcile static.deprovisioning", np.Name)
 	if !nodepoolutils.IsManaged(np, c.cloudProvider) || np.Spec.Replicas == nil {
 		return reconcile.Result{}, nil
 	}
@@ -124,6 +124,8 @@ func (c *Controller) Reconcile(ctx context.Context, np *v1.NodePool) (reconcile.
 	if scaleDownErr := multierr.Combine(scaleDownErrs...); scaleDownErr != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to deprovision nodeclaims, %w", scaleDownErr)
 	}
+
+	fmt.Println("Reconcile static.deprovisioning", np.Name, "done")
 
 	return reconcile.Result{RequeueAfter: time.Minute}, nil
 }
