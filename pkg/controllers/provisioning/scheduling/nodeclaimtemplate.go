@@ -76,6 +76,21 @@ func NewNodeClaimTemplate(nodePool *v1.NodePool) *NodeClaimTemplate {
 	return nct
 }
 
+// SingleValueRequirementLabels resolves non-well-known requirements to labels.
+// Well-known labels and restricted labels (e.g., hostname) are skipped.
+func SingleValueRequirementLabels(r scheduling.Requirements) map[string]string {
+	labels := map[string]string{}
+	for key, requirement := range r {
+		if v1.WellKnownLabels.Has(key) || v1.RestrictedLabels.Has(key) {
+			continue
+		}
+		if value := requirement.Any(); value != "" {
+			labels[key] = value
+		}
+	}
+	return labels
+}
+
 func (i *NodeClaimTemplate) ToNodeClaim() *v1.NodeClaim {
 	// Inject instanceType requirements for NodeClaims belonging to dynamic NodePool
 	// For static we let cloudprovider.Create()
@@ -107,6 +122,9 @@ func (i *NodeClaimTemplate) ToNodeClaim() *v1.NodeClaim {
 			})
 		}
 	}
+
+	// Resolve non-well-known requirements to labels after pod requirements have been intersected
+	i.Labels = lo.Assign(i.Labels, SingleValueRequirementLabels(i.Requirements))
 
 	nc := &v1.NodeClaim{
 		ObjectMeta: metav1.ObjectMeta{
