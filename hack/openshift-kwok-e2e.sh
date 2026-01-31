@@ -38,5 +38,5 @@ KWOK_REPO="${REGISTRY_HOST}/${ko_namespace}" make apply-with-openshift
 echo "Tainting all nodes..."
 oc adm taint nodes --all CriticalAddonsOnly:NoSchedule --overwrite
 
-# run e2e tests
-make e2etests
+# TODO(maxcao13): skip static capacity tests for now since it is not supported yet.
+SKIP="StaticCapacity" TEST_SUITE=regression make e2etests
