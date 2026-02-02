@@ -97,8 +97,11 @@ func (env *Environment) ExpectCleanCluster() {
 	Expect(env.Client.List(env.Context, &pods)).To(Succeed())
 	for i := range pods.Items {
 		// UPSTREAM: <carry>: ignore any pods that are pending to be scheduled in some openshift-* namespace
-		// This is a workaround for the fact that OpenShift core component pods sometimes start/restart and become pending,
-		// but upstream e2e test setup forces all nodes to be tainted, preventing these pods from being scheduled.
+		// This is a workaround for the fact that OpenShift core component pods sometimes start/restart and become pending.
+		// Upstream test setup forces all nodes to either be tainted or unschedulable, preventing these pods from being scheduled.
+		//
+		// Note: this only matters on single node infrastructure (e.g. 1 node with both control-plane and worker node roles)
+		// For regular infrastructure topology, the pods would simply just schedule to the already tainted control plane nodes.
 		if strings.HasPrefix(pods.Items[i].Namespace, "openshift") {
 			continue
 		}
