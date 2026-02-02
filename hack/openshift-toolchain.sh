@@ -15,7 +15,12 @@ main() {
 tools() {
     # go install github.com/google/go-licenses //disabled
     go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@main
-    go install github.com/mikefarah/yq/v4@latest
+    # yq go install is broken and tries to install 2.4.0 in CI
+    # TODO(maxcao13): figure out why later (GOPROXY maybe?), for now just download binary directly
+    # https://github.com/mikefarah/yq/issues/2288
+    YQ_VERSION="v4.52.2"
+    curl -sSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(go env GOARCH)" -o "${GOPATH:-$HOME/go}/bin/yq"
+    chmod +x "${GOPATH:-$HOME/go}/bin/yq"
     go install github.com/google/ko@latest
     # go install github.com/norwoodj/helm-docs/cmd/helm-docs //disabled
     go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
