@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/awslabs/operatorpkg/status"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +44,7 @@ import (
 func init() {
 	v1.WellKnownLabels = v1.WellKnownLabels.Insert(v1alpha1.LabelReservationID)
 	cloudprovider.ReservationIDLabel = v1alpha1.LabelReservationID
+	cloudprovider.ReservedCapacityLabels.Insert(v1alpha1.LabelReservationID)
 }
 
 var _ cloudprovider.CloudProvider = (*CloudProvider)(nil)
@@ -204,7 +206,7 @@ func (c *CloudProvider) Get(_ context.Context, id string) (*v1.NodeClaim, error)
 	if nodeClaim, ok := c.CreatedNodeClaims[id]; ok {
 		return nodeClaim.DeepCopy(), nil
 	}
-	return nil, cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("no nodeclaim exists with id '%s'", id))
+	return nil, cloudprovider.NewNodeClaimNotFoundError(serrors.Wrap(fmt.Errorf("no nodeclaim exists with id"), "id", id))
 }
 
 func (c *CloudProvider) List(_ context.Context) ([]*v1.NodeClaim, error) {
@@ -284,7 +286,7 @@ func (c *CloudProvider) Delete(_ context.Context, nc *v1.NodeClaim) error {
 		delete(c.CreatedNodeClaims, nc.Status.ProviderID)
 		return nil
 	}
-	return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("no nodeclaim exists with provider id '%s'", nc.Status.ProviderID))
+	return cloudprovider.NewNodeClaimNotFoundError(serrors.Wrap(fmt.Errorf("no nodeclaim exists with provider id"), "provider-id", nc.Status.ProviderID))
 }
 
 func (c *CloudProvider) IsDrifted(context.Context, *v1.NodeClaim) (cloudprovider.DriftReason, error) {

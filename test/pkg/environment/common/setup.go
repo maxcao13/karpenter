@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -38,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
+	"sigs.k8s.io/karpenter/pkg/apis/v1alpha1"
 	"sigs.k8s.io/karpenter/pkg/test"
 	"sigs.k8s.io/karpenter/pkg/utils/pod"
 	"sigs.k8s.io/karpenter/pkg/utils/pretty"
@@ -66,6 +68,9 @@ var (
 		&schedulingv1.PriorityClass{},
 		&corev1.Node{},
 		&v1.NodeClaim{},
+		&v1alpha1.NodeOverlay{},
+		&admissionregistrationv1.ValidatingAdmissionPolicy{},
+		&admissionregistrationv1.ValidatingAdmissionPolicyBinding{},
 	}
 )
 
@@ -92,8 +97,11 @@ func (env *Environment) ExpectCleanCluster() {
 	Expect(env.Client.List(env.Context, &pods)).To(Succeed())
 	for i := range pods.Items {
 		// UPSTREAM: <carry>: ignore any pods that are pending to be scheduled in some openshift-* namespace
-		// This is a workaround for the fact that OpenShift core component pods sometimes start/restart and become pending,
-		// but upstream e2e test setup forces all nodes to be tainted, preventing these pods from being scheduled.
+		// This is a workaround for the fact that OpenShift core component pods sometimes start/restart and become pending.
+		// Upstream test setup forces all nodes to either be tainted or unschedulable, preventing these pods from being scheduled.
+		//
+		// Note: this only matters on single node infrastructure (e.g. 1 node with both control-plane and worker node roles)
+		// For regular infrastructure topology, the pods would simply just schedule to the already tainted control plane nodes.
 		if strings.HasPrefix(pods.Items[i].Namespace, "openshift") {
 			continue
 		}
@@ -148,7 +156,15 @@ func (env *Environment) PrintCluster() {
 func (env *Environment) CleanupObjects(cleanableObjects ...client.Object) {
 	time.Sleep(time.Second) // wait one second to let the caches get up-to-date for deletion
 	wg := sync.WaitGroup{}
+	version, err := env.KubeClient.Discovery().ServerVersion()
+	Expect(err).To(BeNil())
 	for _, obj := range append(cleanableObjects, env.DefaultNodeClass.DeepCopy()) {
+		if version.Minor < "30" &&
+			obj.GetObjectKind().GroupVersionKind().Kind == "ValidatingAdmissionPolicy" &&
+			obj.GetObjectKind().GroupVersionKind().Kind == "ValidatingAdmissionPolicyBinding" {
+			continue
+		}
+
 		wg.Add(1)
 		go func(obj client.Object) {
 			defer wg.Done()
@@ -164,12 +180,13 @@ func (env *Environment) CleanupObjects(cleanableObjects ...client.Object) {
 					defer GinkgoRecover()
 					g.Expect(env.ExpectTestingFinalizerRemoved(&metaList.Items[i])).To(Succeed())
 					g.Expect(client.IgnoreNotFound(env.Client.Delete(env, &metaList.Items[i],
+						client.PropagationPolicy(metav1.DeletePropagationForeground),
 						&client.DeleteOptions{GracePeriodSeconds: lo.ToPtr(int64(0))}))).To(Succeed())
 				})
 				// If the deletes eventually succeed, we should have no elements here at the end of the test
 				g.Expect(env.Client.List(env, metaList, client.HasLabels([]string{test.DiscoveryLabel}), client.Limit(1))).To(Succeed())
 				g.Expect(metaList.Items).To(HaveLen(0))
-			}).WithTimeout(10 * time.Minute).Should(Succeed())
+			}).Should(Succeed())
 		}(obj)
 	}
 	wg.Wait()
